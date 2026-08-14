@@ -16,7 +16,7 @@ analytics.init({
 SDK 会向以下固定地址发送请求：
 
 ```text
-POST https://checker.citv.cn/v2/analytics/page-views
+POST https://checker.citv.cn/api/v2/analytics/page-views
 ```
 
 请求体符合 CITV Frontend Analytics OpenAPI：

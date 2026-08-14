@@ -1,4 +1,4 @@
-const REPORT_ENDPOINT = "https://checker.citv.cn/v2/analytics/page-views"
+const REPORT_ENDPOINT = "https://checker.citv.cn/api/v2/analytics/page-views"
 const VISITOR_ID_KEY = "citv_live_analytics:visitor_id"
 const REPORT_DELAY_MIN_MS = 3 * 60_000
 const REPORT_DELAY_JITTER_MS = 2 * 60_000
