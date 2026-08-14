@@ -1,0 +1,7 @@
+# dist/ is intentionally included in the npm package via package.json "files".
+src/
+index.test.js
+tsconfig.json
+tsconfig.build.json
+vite.config.ts
+

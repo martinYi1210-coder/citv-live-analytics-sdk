@@ -1,8 +1,55 @@
 {
   "name": "@citv-cn/citv-live-analytics-sdk",
-  "version": "1.0.0",
+  "version": "1.0.2",
+  "description": "轻量级直播间访问与事件数据采集 SDK。",
+  "keywords": [
+    "citv",
+    "analytics",
+    "live-streaming",
+    "web-sdk",
+    "uv",
+    "pv",
+    "tracking",
+    "event-tracking"
+  ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/martinYi1210-coder/citv-live-analytics-sdk.git"
+  },
+  "homepage": "https://github.com/martinYi1210-coder/citv-live-analytics-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/martinYi1210-coder/citv-live-analytics-sdk/issues"
+  },
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "unpkg": "./dist/citv-live-analytics-sdk.iife.js",
+  "jsdelivr": "./dist/citv-live-analytics-sdk.iife.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "sideEffects": false,
   "publishConfig": {
     "access": "public"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && tsc -p tsconfig.build.json",
+    "preview": "vite preview",
+    "test": "npm run build && node --test",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1"
   }
 }
