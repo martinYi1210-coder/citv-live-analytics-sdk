@@ -1,6 +1,7 @@
 {
   "name": "@citv-cn/citv-live-analytics-sdk",
   "version": "1.0.0",
+  "license": "MIT",
   "publishConfig": {
     "access": "public"
   }
