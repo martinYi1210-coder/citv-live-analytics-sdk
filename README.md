@@ -1,39 +1,38 @@
 # citv-live-analytics-sdk
 
-轻量级直播间访问数据采集 SDK。每次调用 `track` 计为一次 PV；同一浏览器的
-`anonymous_id` 重复访问同一 `ccid` 时继续增加 PV，但不再增加 UV。
+轻量级直播间页面访问数据采集 SDK。页面每次加载时调用一次 `init`，SDK 会立即
+记录一次页面访问，并在随机延迟后向 CITV Analytics API 上报；每次成功上报计为
+一次 PV，服务端根据持久化的 `visitor_id` 去重计算 UV。
 
-```js
-import { analytics } from "@citv-cn/citv-live-analytics-sdk";
+```ts
+import { analytics } from "@citv-cn/citv-live-analytics-sdk"
 
-analytics.track({
-  ccid: "ccid_10001",
-});
+analytics.init({
+  appid: "app-1",
+  ccid: "room-001",
+})
 ```
 
-`track` 会同步返回本次生成的事件：
+SDK 会向以下固定地址发送请求：
 
-```js
+```text
+POST https://checker.citv.cn/v2/analytics/page-views
+```
+
+请求体符合 CITV Frontend Analytics OpenAPI：
+
+```json
 {
-  event: "live_room_view",
-  event_id: "evt_...",
-  ccid: "ccid_10001",
-  anonymous_id: "anon_...",
-  pv: 1,
-  uv: 1, // 同一 anonymous_id 再次访问该 ccid 时为 0
-  timestamp: 1786665600000
+  "appid": "app-1",
+  "ccid": "room-001",
+  "visitor_id": "de840a34-fad8-410c-af35-aec2078d10fa",
+  "event_id": "3f242e95-cbd7-44c8-b73b-7912db97300f",
+  "occurred_at": "2026-08-14T07:30:00.000Z",
+  "page_url": "https://checker.citv.cn/live/room-001"
 }
 ```
 
-刷新页面后 `anonymous_id` 和直播间首访标记仍保存在 `localStorage` 中。因此，
-页面每次进入时调用一次 `track` 即可满足 PV/UV 统计语义。
-
-后端接口确定后可配置上报地址：
-
-```js
-analytics.init({ endpoint: "https://example.com/analytics/events" });
-analytics.track({ ccid: "ccid_10001" });
-```
-
-正常访问使用 `fetch` 发送 JSON；页面进入隐藏状态时，待发送事件会通过
-`navigator.sendBeacon` 尽力送达。未配置 `endpoint` 时不会发起网络请求。
+`visitor_id` 首次生成后保存在 `localStorage`，刷新页面时保持不变；每次调用
+`init` 都会生成新的 `event_id`。事件会在 3–5 分钟的随机延迟后使用 `fetch` 和
+`keepalive` 顺序发送，以平滑服务端瞬时流量；页面隐藏时使用
+`navigator.sendBeacon` 提前发送待上报事件，发送失败时自动回退到 `fetch`。

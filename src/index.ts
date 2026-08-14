@@ -1,48 +1,42 @@
-const STORAGE_PREFIX = "citv_live_analytics"
-const ANONYMOUS_ID_KEY = `${STORAGE_PREFIX}:anonymous_id`
-const VISITED_ROOM_PREFIX = `${STORAGE_PREFIX}:visited_room:`
+const REPORT_ENDPOINT = "https://checker.citv.cn/v2/analytics/page-views"
+const VISITOR_ID_KEY = "citv_live_analytics:visitor_id"
+const REPORT_DELAY_MIN_MS = 3 * 60_000
+const REPORT_DELAY_JITTER_MS = 2 * 60_000
 
 export interface AnalyticsInitOptions {
-  endpoint?: string
-}
-
-export interface TrackOptions {
+  appid: string
   ccid: string
 }
 
-export interface LiveRoomViewEvent {
-  event: "live_room_view"
+export interface PageViewRequest {
+  appid: string
+  ccid: string
+  visitor_id: string
   event_id: string
-  ccid: string
-  anonymous_id: string
-  pv: 1
-  uv: 0 | 1
-  timestamp: number
+  occurred_at: string
+  page_url: string
 }
 
 export interface Analytics {
-  init(options?: AnalyticsInitOptions): Analytics
-  track(options: TrackOptions): LiveRoomViewEvent
-  flush(): Promise<boolean>
+  init(options: AnalyticsInitOptions): void
 }
 
-let endpoint = ""
-let fallbackAnonymousId = ""
+let fallbackVisitorId = ""
 let visibilityListenerAttached = false
-let eventSequence = 0
+let reportTimer: number | null = null
 
-const fallbackVisitedRooms = new Set<string>()
-const pendingEvents = new Map<string, LiveRoomViewEvent>()
+const pendingEvents = new Map<string, PageViewRequest>()
 
 function getBrowserWindow(): Window | null {
   return typeof window === "undefined" ? null : window
 }
 
-function createId(prefix: string): string {
-  eventSequence += 1
-  return `${prefix}_${Date.now().toString(36)}_${Math.random()
-    .toString(36)
-    .slice(2)}_${eventSequence.toString(36)}`
+function createUuid(): string {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (character) => {
+    const random = Math.floor(Math.random() * 16)
+    const value = character === "x" ? random : (random & 0x3) | 0x8
+    return value.toString(16)
+  })
 }
 
 function getStorage(): Storage | null {
@@ -59,83 +53,58 @@ function getStorage(): Storage | null {
   }
 }
 
-function getAnonymousId(): string {
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value,
+  )
+}
+
+function getVisitorId(): string {
   const storage = getStorage()
 
   if (storage) {
     try {
-      const storedId = storage.getItem(ANONYMOUS_ID_KEY)
+      const storedId = storage.getItem(VISITOR_ID_KEY)
 
-      if (storedId) {
-        fallbackAnonymousId = storedId
+      if (storedId && isUuid(storedId)) {
+        fallbackVisitorId = storedId
         return storedId
       }
     } catch {
-      // Fall back to the in-memory id when storage is unavailable.
+      // Fall back to page memory when localStorage is unavailable.
     }
   }
 
-  if (!fallbackAnonymousId) {
-    fallbackAnonymousId = createId("anon")
+  if (!fallbackVisitorId) {
+    fallbackVisitorId = createUuid()
   }
 
   if (storage) {
     try {
-      storage.setItem(ANONYMOUS_ID_KEY, fallbackAnonymousId)
+      storage.setItem(VISITOR_ID_KEY, fallbackVisitorId)
     } catch {
-      // Tracking can still work for the lifetime of the current page.
+      // The in-memory visitor id remains usable for the current page.
     }
   }
 
-  return fallbackAnonymousId
+  return fallbackVisitorId
 }
 
-function getVisitedRoomKey(anonymousId: string, ccid: string): string {
-  return `${VISITED_ROOM_PREFIX}${encodeURIComponent(anonymousId)}:${encodeURIComponent(ccid)}`
-}
-
-function markRoomVisited(anonymousId: string, ccid: string): boolean {
-  const key = getVisitedRoomKey(anonymousId, ccid)
-  const storage = getStorage()
-
-  if (storage) {
-    try {
-      const hasVisited = storage.getItem(key) === "1"
-
-      if (!hasVisited) {
-        storage.setItem(key, "1")
-      }
-
-      return hasVisited
-    } catch {
-      // Fall back to page memory when storage is unavailable.
-    }
-  }
-
-  const hasVisited = fallbackVisitedRooms.has(key)
-  fallbackVisitedRooms.add(key)
-  return hasVisited
-}
-
-function sendWithBeacon(event: LiveRoomViewEvent): boolean {
+function sendWithBeacon(event: PageViewRequest): boolean {
   const browserWindow = getBrowserWindow()
 
   if (
     !browserWindow ||
-    !endpoint ||
     typeof browserWindow.navigator.sendBeacon !== "function"
   ) {
     return false
   }
 
-  const sendBeacon = browserWindow.navigator.sendBeacon
-
   try {
-    const accepted = sendBeacon.call(
-      browserWindow.navigator,
-      endpoint,
-      JSON.stringify(event),
-    )
+    const body = new Blob([JSON.stringify(event)], {
+      type: "application/json",
+    })
+    const accepted = browserWindow.navigator.sendBeacon(REPORT_ENDPOINT, body)
 
     if (accepted) {
       pendingEvents.delete(event.event_id)
@@ -147,17 +116,15 @@ function sendWithBeacon(event: LiveRoomViewEvent): boolean {
   }
 }
 
-async function sendWithFetch(event: LiveRoomViewEvent): Promise<boolean> {
+async function sendWithFetch(event: PageViewRequest): Promise<boolean> {
   const browserWindow = getBrowserWindow()
 
-  if (!endpoint || typeof browserWindow?.fetch !== "function") {
+  if (typeof browserWindow?.fetch !== "function") {
     return false
   }
 
-  const requestEndpoint = endpoint
-
   try {
-    const response = await browserWindow.fetch(requestEndpoint, {
+    const response = await browserWindow.fetch(REPORT_ENDPOINT, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -177,21 +144,10 @@ async function sendWithFetch(event: LiveRoomViewEvent): Promise<boolean> {
   }
 }
 
-function send(event: LiveRoomViewEvent): void {
-  if (!endpoint) {
-    return
+async function flushWithFetch(): Promise<void> {
+  for (const event of Array.from(pendingEvents.values())) {
+    await sendWithFetch(event)
   }
-
-  pendingEvents.set(event.event_id, event)
-
-  const browserWindow = getBrowserWindow()
-  const isHidden = browserWindow?.document.visibilityState === "hidden"
-
-  if (isHidden && sendWithBeacon(event)) {
-    return
-  }
-
-  void sendWithFetch(event)
 }
 
 function flushWithBeacon(): void {
@@ -200,79 +156,98 @@ function flushWithBeacon(): void {
   }
 }
 
-function attachVisibilityListener(): void {
-  const browserWindow = getBrowserWindow()
-
-  if (visibilityListenerAttached || !browserWindow) {
+function attachVisibilityListener(browserWindow: Window): void {
+  if (visibilityListenerAttached) {
     return
   }
 
   browserWindow.document.addEventListener("visibilitychange", () => {
     if (browserWindow.document.visibilityState === "hidden") {
+      if (reportTimer !== null) {
+        browserWindow.clearTimeout(reportTimer)
+        reportTimer = null
+      }
+
       flushWithBeacon()
+      void flushWithFetch()
     }
   })
   visibilityListenerAttached = true
 }
 
-export function init(options: AnalyticsInitOptions = {}): Analytics {
-  if (options.endpoint !== undefined && typeof options.endpoint !== "string") {
-    throw new TypeError("analytics.init: endpoint must be a string")
+function scheduleReport(browserWindow: Window): void {
+  if (reportTimer !== null) {
+    return
   }
 
-  endpoint = options.endpoint?.trim() || ""
-  attachVisibilityListener()
+  const delay =
+    REPORT_DELAY_MIN_MS + Math.floor(Math.random() * REPORT_DELAY_JITTER_MS)
 
-  if (endpoint) {
-    for (const event of pendingEvents.values()) {
-      void sendWithFetch(event)
-    }
-  }
-
-  return analytics
+  reportTimer = browserWindow.setTimeout(() => {
+    reportTimer = null
+    void flushWithFetch()
+  }, delay)
 }
 
-export function track(options: TrackOptions): LiveRoomViewEvent {
-  const ccid = options?.ccid
-
-  if (typeof ccid !== "string" || !ccid.trim()) {
-    throw new TypeError("analytics.track: ccid must be a non-empty string")
+function validateIdentifier(name: "appid" | "ccid", value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new TypeError(`analytics.init: ${name} must be a non-empty string`)
   }
 
-  attachVisibilityListener()
+  const normalizedValue = value.trim()
 
-  const normalizedCcid = ccid.trim()
-  const anonymousId = getAnonymousId()
-  const hasVisited = markRoomVisited(anonymousId, normalizedCcid)
-  const event: LiveRoomViewEvent = {
-    event: "live_room_view",
-    event_id: createId("evt"),
-    ccid: normalizedCcid,
-    anonymous_id: anonymousId,
-    pv: 1,
-    uv: hasVisited ? 0 : 1,
-    timestamp: Date.now(),
+  if (normalizedValue.length > 128) {
+    throw new TypeError(`analytics.init: ${name} must not exceed 128 characters`)
   }
 
-  send(event)
-  return event
+  return normalizedValue
 }
 
-export async function flush(): Promise<boolean> {
-  if (!endpoint) {
-    return false
+export function init(options: AnalyticsInitOptions): void {
+  const appid = validateIdentifier("appid", options?.appid)
+  const ccid = validateIdentifier("ccid", options?.ccid)
+  const browserWindow = getBrowserWindow()
+
+  if (!browserWindow) {
+    throw new Error("analytics.init: a browser environment is required")
   }
 
-  const results = await Promise.all(
-    Array.from(pendingEvents.values(), (event) => sendWithFetch(event)),
-  )
-  return results.every(Boolean)
+  const pageUrl = browserWindow.location.href
+
+  if (pageUrl.length > 2048) {
+    throw new TypeError("analytics.init: page_url must not exceed 2048 characters")
+  }
+
+  attachVisibilityListener(browserWindow)
+
+  const event: PageViewRequest = {
+    appid,
+    ccid,
+    visitor_id: getVisitorId(),
+    event_id: createUuid(),
+    occurred_at: new Date().toISOString(),
+    page_url: pageUrl,
+  }
+
+  pendingEvents.set(event.event_id, event)
+
+  if (
+    browserWindow.document.visibilityState === "hidden" &&
+    sendWithBeacon(event)
+  ) {
+    return
+  }
+
+  if (browserWindow.document.visibilityState === "hidden") {
+    void flushWithFetch()
+    return
+  }
+
+  scheduleReport(browserWindow)
 }
 
 export const analytics: Analytics = Object.freeze({
   init,
-  track,
-  flush,
 })
 
 export default analytics
