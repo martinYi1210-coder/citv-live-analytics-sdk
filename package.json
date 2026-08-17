@@ -1,6 +1,6 @@
 {
   "name": "@citv-cn/citv-live-analytics-sdk",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "轻量级直播间访问与事件数据采集 SDK。",
   "keywords": [
     "citv",

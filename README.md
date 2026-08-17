@@ -1,5 +1,9 @@
 # citv-live-analytics-sdk
 
+> [!IMPORTANT]
+> SSR 环境会静默跳过，仅在浏览器客户端执行数据采集与上报。SDK 不依赖 React、Vue
+> 等前端框架。
+
 轻量级直播间页面访问数据采集 SDK。页面每次加载时调用一次 `init`，SDK 会立即
 记录一次页面访问，并在随机延迟后向 CITV Analytics API 上报；每次成功上报计为
 一次 PV，服务端根据持久化的 `visitor_id` 去重计算 UV。
